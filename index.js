@@ -31,20 +31,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// vendetta:@vendetta/ui/toasts
-var require_toasts = __commonJS({
-  "vendetta:@vendetta/ui/toasts"(exports, module2) {
-    module2.exports = vendetta.ui.toasts;
-  }
-});
-
-// vendetta:@vendetta/plugin
-var require_plugin = __commonJS({
-  "vendetta:@vendetta/plugin"(exports, module2) {
-    module2.exports = vendetta.plugin;
-  }
-});
-
 // vendetta:@vendetta/metro/common
 var require_common = __commonJS({
   "vendetta:@vendetta/metro/common"(exports, module2) {
@@ -56,6 +42,13 @@ var require_common = __commonJS({
 var require_metro = __commonJS({
   "vendetta:@vendetta/metro"(exports, module2) {
     module2.exports = vendetta.metro;
+  }
+});
+
+// vendetta:@vendetta/plugin
+var require_plugin = __commonJS({
+  "vendetta:@vendetta/plugin"(exports, module2) {
+    module2.exports = vendetta.plugin;
   }
 });
 
@@ -72,7 +65,78 @@ __export(index_exports, {
   default: () => index_default
 });
 module.exports = __toCommonJS(index_exports);
-var import_toasts5 = __toESM(require_toasts(), 1);
+
+// src/rt.ts
+var import_common = __toESM(require_common(), 1);
+var import_metro = __toESM(require_metro(), 1);
+function usableReact(c) {
+  return !!c && typeof c.createElement === "function" && typeof c.useState === "function";
+}
+function pickReact() {
+  const tries = [
+    () => import_common.React,
+    () => import_common.React?.default,
+    () => (0, import_metro.findByProps)("createElement", "useState"),
+    () => globalThis.React,
+    () => globalThis.vendetta?.metro?.common?.React
+  ];
+  for (const t of tries) {
+    try {
+      const c = t();
+      if (usableReact(c)) return c;
+    } catch {
+    }
+  }
+  return import_common.React;
+}
+function pickRN() {
+  for (const t of [() => import_common.ReactNative, () => import_common.ReactNative?.default, () => (0, import_metro.findByProps)("View", "Text", "StyleSheet")]) {
+    try {
+      const c = t();
+      if (c && c.View && c.Text) return c;
+    } catch {
+    }
+  }
+  return import_common.ReactNative;
+}
+var React = pickReact();
+var RN = pickRN();
+function reactDiagnostics() {
+  const d = (n, c) => `${n}: ${c ? "obj keys=" + Object.keys(c).slice(0, 12).join(",") : String(c)}`;
+  return [d("common.React", import_common.React), "createElement=" + typeof import_common.React?.createElement, "picked createElement=" + typeof React?.createElement, "missing RN components: " + missingComponents(["View", "Text", "ScrollView", "TextInput", "Switch", "TouchableOpacity", "Pressable"])].join("\n");
+}
+function comp(name) {
+  const tries = [
+    () => RN?.[name],
+    () => import_common.ReactNative?.[name],
+    () => (0, import_metro.findByProps)(name)?.[name],
+    () => (0, import_metro.findByName)(name, false)?.default ?? (0, import_metro.findByName)(name),
+    () => globalThis.ReactNative?.[name]
+  ];
+  for (const t of tries) {
+    try {
+      const c = t();
+      if (c) return c;
+    } catch {
+    }
+  }
+  return void 0;
+}
+function missingComponents(names) {
+  return names.filter((n) => !comp(n)).join(",") || "none";
+}
+
+// src/notify.ts
+function notify(message) {
+  console.log("[aegires-e2ee] notice:", message);
+  try {
+    RN.Alert.alert("Aegires E2EE", message);
+  } catch {
+  }
+}
+function quiet(message) {
+  console.log("[aegires-e2ee]", message);
+}
 
 // src/state.ts
 var import_plugin = __toESM(require_plugin(), 1);
@@ -818,7 +882,6 @@ function noteFound(label, found) {
 }
 
 // src/patches/send.ts
-var import_toasts = __toESM(require_toasts(), 1);
 var import_plugin2 = __toESM(require_plugin(), 1);
 
 // node_modules/@noble/ciphers/esm/utils.js
@@ -2187,17 +2250,17 @@ function prepare(channelId, content) {
   if (!isEncryptionOn(channelId)) return null;
   const key = getSendKey(channelId);
   if (!key) {
-    (0, import_toasts.showToast)("E2EE is on for this chat but no key is set - message not sent");
+    notify("E2EE is on for this chat but no key is set - message not sent");
     return BLOCK;
   }
   if (content.length > MAX_PLAINTEXT_LEN) {
-    (0, import_toasts.showToast)(`Too long to encrypt (${content.length}/${MAX_PLAINTEXT_LEN}) - message not sent`);
+    notify(`Too long to encrypt (${content.length}/${MAX_PLAINTEXT_LEN}) - message not sent`);
     return BLOCK;
   }
   try {
     return encryptText(content, key);
   } catch (e) {
-    (0, import_toasts.showToast)("Encryption failed - message not sent");
+    notify("Encryption failed - message not sent");
     console.log("[aegires-e2ee] encrypt error", e);
     return BLOCK;
   }
@@ -2207,7 +2270,7 @@ function installSendPatch() {
   noteFound("sendMessage module", MessageActions);
   if (!MessageActions) {
     diag.installed["sendMessage lookup"] = "NOT FOUND";
-    (0, import_toasts.showToast)("Aegires E2EE: could not find Discord's sendMessage - sending is NOT encrypted");
+    throw new Error("sendMessage module not found - sending is NOT encrypted");
     return () => {
     };
   }
@@ -2225,7 +2288,6 @@ function installSendPatch() {
           encryptionOn: typeof channelId === "string" ? isEncryptionOn(channelId) : null,
           hasKey: typeof channelId === "string" ? !!getSendKey(channelId) : null
         });
-        if (typeof channelId === "string") (0, import_toasts.showToast)(`E2EE hook: on=${isEncryptionOn(channelId)} key=${!!getSendKey(channelId)}`);
       }
       if (message && typeof channelId === "string") {
         const out = prepare(channelId, message.content);
@@ -2276,69 +2338,8 @@ function splitSizeTag(body) {
   return { width: parseInt(m[1], 10), height: parseInt(m[2], 10), text: body.slice(m[0].length) };
 }
 
-// src/rt.ts
-var import_common = __toESM(require_common(), 1);
-var import_metro = __toESM(require_metro(), 1);
-function usableReact(c) {
-  return !!c && typeof c.createElement === "function" && typeof c.useState === "function";
-}
-function pickReact() {
-  const tries = [
-    () => import_common.React,
-    () => import_common.React?.default,
-    () => (0, import_metro.findByProps)("createElement", "useState"),
-    () => globalThis.React,
-    () => globalThis.vendetta?.metro?.common?.React
-  ];
-  for (const t of tries) {
-    try {
-      const c = t();
-      if (usableReact(c)) return c;
-    } catch {
-    }
-  }
-  return import_common.React;
-}
-function pickRN() {
-  for (const t of [() => import_common.ReactNative, () => import_common.ReactNative?.default, () => (0, import_metro.findByProps)("View", "Text", "StyleSheet")]) {
-    try {
-      const c = t();
-      if (c && c.View && c.Text) return c;
-    } catch {
-    }
-  }
-  return import_common.ReactNative;
-}
-var React = pickReact();
-var RN = pickRN();
-function reactDiagnostics() {
-  const d = (n, c) => `${n}: ${c ? "obj keys=" + Object.keys(c).slice(0, 12).join(",") : String(c)}`;
-  return [d("common.React", import_common.React), "createElement=" + typeof import_common.React?.createElement, "picked createElement=" + typeof React?.createElement, "missing RN components: " + missingComponents(["View", "Text", "ScrollView", "TextInput", "Switch", "TouchableOpacity", "Pressable"])].join("\n");
-}
-function comp(name) {
-  const tries = [
-    () => RN?.[name],
-    () => import_common.ReactNative?.[name],
-    () => (0, import_metro.findByProps)(name)?.[name],
-    () => (0, import_metro.findByName)(name, false)?.default ?? (0, import_metro.findByName)(name),
-    () => globalThis.ReactNative?.[name]
-  ];
-  for (const t of tries) {
-    try {
-      const c = t();
-      if (c) return c;
-    } catch {
-    }
-  }
-  return void 0;
-}
-function missingComponents(names) {
-  return names.filter((n) => !comp(n)).join(",") || "none";
-}
-
 // src/patches/attachments.ts
 var import_plugin3 = __toESM(require_plugin(), 1);
-var import_toasts2 = __toESM(require_toasts(), 1);
 
 // src/patches/attachments-util.ts
 var MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -2523,7 +2524,7 @@ function installRenderPatch() {
   hook("jsx", jsxRt, true);
   hook("jsxs", jsxRt, true);
   hook("createElement", React, false);
-  if (!undo2.length) (0, import_toasts2.showToast)("Aegires E2EE: could not hook rendering - encrypted images will not display");
+  if (!undo2.length) throw new Error("could not hook rendering - encrypted images will not display");
   return () => undo2.forEach((u) => u());
 }
 var FM = globalThis.nativeModuleProxy?.DCDFileManager ?? globalThis.nativeModuleProxy?.RTNFileManager;
@@ -2618,9 +2619,7 @@ async function encryptUpload(u, key, channelId) {
 function installUploadPatch() {
   const mod = findFns("uploadLocalFiles");
   if (!mod) {
-    (0, import_toasts2.showToast)("Aegires E2EE: upload hook not found - attachments are NOT encrypted");
-    return () => {
-    };
+    throw new Error("upload hook not found - attachments are NOT encrypted");
   }
   return instead("uploadLocalFiles", mod, (args, orig) => {
     const opts = args[0];
@@ -2629,12 +2628,12 @@ function installUploadPatch() {
     if (!channelId || !isEncryptionOn(channelId)) return orig(...args);
     const key = getSendKey(channelId);
     if (!key) {
-      (0, import_toasts2.showToast)("E2EE is on but no key is set - upload cancelled");
+      notify("E2EE is on but no key is set - upload cancelled");
       return Promise.resolve();
     }
     const uploads = Array.isArray(opts?.uploads) ? opts.uploads : Array.isArray(opts?.files) ? opts.files : [];
     if (!uploads.length) {
-      (0, import_toasts2.showToast)("Aegires E2EE: unknown upload format - upload cancelled to stay safe");
+      notify("Aegires E2EE: unknown upload format - upload cancelled to stay safe");
       log2("uploadLocalFiles args", Object.keys(opts ?? {}));
       return Promise.resolve();
     }
@@ -2643,7 +2642,7 @@ function installUploadPatch() {
         for (const u of uploads) await encryptUpload(u, key, channelId);
       } catch (e) {
         console.log("[aegires-e2ee] attachment encrypt failed", e);
-        (0, import_toasts2.showToast)("Attachment encryption failed - upload cancelled");
+        notify("Attachment encryption failed - upload cancelled");
         return;
       }
       return orig(...args);
@@ -2761,7 +2760,6 @@ function installReceivePatch() {
 
 // src/commands.ts
 var import_commands = __toESM(require_commands(), 1);
-var import_toasts3 = __toESM(require_toasts(), 1);
 
 // src/selftest-vectors.ts
 var VECTORS = [
@@ -2825,23 +2823,23 @@ function installCommands() {
       execute: async (args, ctx) => {
         const action = args?.find((a) => a.name === "action")?.value;
         const channelId = ctx?.channel?.id;
-        if (!channelId) return (0, import_toasts3.showToast)("E2EE: no channel in context");
+        if (!channelId) return notify("E2EE: no channel in context");
         if (action === "on") {
-          if (!getSendKey(channelId)) return (0, import_toasts3.showToast)("Set a key in the plugin settings first");
+          if (!getSendKey(channelId)) return notify("Set a key in the plugin settings first");
           setChannelEnabled(channelId, true);
-          return (0, import_toasts3.showToast)("E2EE ON for this chat");
+          return notify("E2EE ON for this chat");
         }
         if (action === "off") {
           setChannelEnabled(channelId, false);
-          return (0, import_toasts3.showToast)("E2EE OFF for this chat");
+          return notify("E2EE OFF for this chat");
         }
         if (action === "status") {
-          return (0, import_toasts3.showToast)(`E2EE ${isEncryptionOn(channelId) ? "ON" : "OFF"} - key ${getSendKey(channelId) ? "set" : "missing"}`);
+          return notify(`E2EE ${isEncryptionOn(channelId) ? "ON" : "OFF"} - key ${getSendKey(channelId) ? "set" : "missing"}`);
         }
         if (action === "selftest") {
-          (0, import_toasts3.showToast)("Running self-test...");
+          notify("Running self-test...");
           const r = await runSelfTest();
-          return (0, import_toasts3.showToast)(r.ok ? "Self-test passed" : "Self-test FAILED - open plugin settings for details");
+          return notify(r.ok ? "Self-test passed" : "Self-test FAILED - open plugin settings for details");
         }
       }
     });
@@ -2854,7 +2852,6 @@ function installCommands() {
 
 // src/ui/Settings.tsx
 var import_plugin5 = __toESM(require_plugin(), 1);
-var import_toasts4 = __toESM(require_toasts(), 1);
 var View = comp("View");
 var Text = comp("Text");
 var ScrollView = comp("ScrollView") ?? View;
@@ -2916,9 +2913,9 @@ function SettingsInner() {
     setBusy(true);
     try {
       await fn();
-      (0, import_toasts4.showToast)(what + " - done");
+      notify(what + " - done");
     } catch (e) {
-      (0, import_toasts4.showToast)(what + " failed: " + String(e));
+      notify(what + " failed: " + String(e));
     } finally {
       setBusy(false);
       refresh();
@@ -2937,7 +2934,7 @@ function SettingsInner() {
         label: busy ? "Deriving key..." : "Set global key",
         busy,
         onPress: () => {
-          if (!pw) return (0, import_toasts4.showToast)("Password cannot be empty");
+          if (!pw) return notify("Password cannot be empty");
           run("Set global key", async () => {
             await setGlobalPassword(pw);
             setPw("");
@@ -2947,7 +2944,7 @@ function SettingsInner() {
     ),
     hasGlobalKey() ? /* @__PURE__ */ React.createElement(Button, { label: "Clear global key", danger: true, onPress: () => {
       clearGlobalKey();
-      (0, import_toasts4.showToast)("Global key cleared");
+      notify("Global key cleared");
       refresh();
     } }) : null
   ), /* @__PURE__ */ React.createElement(Card, { title: "Behaviour" }, /* @__PURE__ */ React.createElement(ToggleRow, { label: "Encrypt outgoing messages by default (in chats without their own on/off setting)", value: !!import_plugin5.storage.encryptByDefault, onChange: (v) => {
@@ -2965,7 +2962,7 @@ function SettingsInner() {
       label: "Save for this chat",
       busy,
       onPress: () => {
-        if (!/^\d+$/.test(chanId)) return (0, import_toasts4.showToast)("Channel ID must be digits only");
+        if (!/^\d+$/.test(chanId)) return notify("Channel ID must be digits only");
         run("Save chat settings", async () => {
           if (chanPw) await setChannelPassword(chanId, chanPw);
           setChannelEnabled(chanId, true);
@@ -2987,7 +2984,7 @@ function SettingsInner() {
       onPress: () => run("Self-test", async () => {
         const r = await runSelfTest();
         setTestLines(r.lines);
-        (0, import_toasts4.showToast)(r.ok ? "Self-test passed" : "Self-test FAILED");
+        notify(r.ok ? "Self-test passed" : "Self-test FAILED");
       })
     }
   ), testLines.map((l, i) => /* @__PURE__ */ React.createElement(Text, { key: i, style: { color: l.startsWith("PASS") ? C.text : C.danger, marginTop: 4, fontFamily: "monospace" } }, l))));
@@ -3022,7 +3019,7 @@ function safely(name, install2, retry = 3) {
     diag.installed[name] = "FAILED: " + msg + (retry > 0 ? " (retrying)" : "");
     console.log(`[aegires-e2ee] ${name} failed to install`, e);
     if (retry > 0) timers.push(setTimeout(() => safely(name, install2, retry - 1), 4e3));
-    else (0, import_toasts5.showToast)(`Aegires E2EE: ${name} failed: ${msg.slice(0, 60)}`);
+    else quiet(`${name} failed: ${msg}`);
   }
 }
 var index_default = {
@@ -3033,7 +3030,7 @@ var index_default = {
     } catch {
     }
     if (!hasSecureRandom()) {
-      (0, import_toasts5.showToast)("Aegires E2EE: no secure random source - encrypting is impossible. Run the self-test in settings.");
+      quiet("no secure random source - encrypting is impossible. Run the self-test in settings.");
     }
     safely("send patch", installSendPatch);
     safely("receive patch", installReceivePatch);
