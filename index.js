@@ -2663,6 +2663,53 @@ function installTagPatch() {
     }
   });
 }
+var IMAGES_WORKING = false;
+var PLACEHOLDER_MARK = "\u{1F512} Encrypted attachment";
+function addPlaceholder(m) {
+  if (!m || !Array.isArray(m.attachments)) return;
+  const names = [];
+  for (const a of m.attachments) {
+    if (a && isEncryptedFileName(a.filename)) names.push(String(a.filename));
+  }
+  if (!names.length) return;
+  if (typeof m.content === "string" && looksEncrypted(m.content)) return;
+  const text = typeof m.content === "string" ? m.content : "";
+  if (text.indexOf(PLACEHOLDER_MARK) !== -1) return;
+  const note = `${PLACEHOLDER_MARK}: cannot decrypt images - image decryption is currently broken`;
+  m.content = text ? `${text}
+${note}` : note;
+  if (m.referenced_message) addPlaceholder(m.referenced_message);
+}
+function installPlaceholderPatch() {
+  const FluxDispatcher = findFlux();
+  if (!FluxDispatcher) throw new Error("FluxDispatcher not found");
+  return before("dispatch", FluxDispatcher, (args) => {
+    try {
+      const e = args[0];
+      if (!e || typeof e !== "object") return;
+      if (e.message) addPlaceholder(e.message);
+      if (Array.isArray(e.messages)) {
+        for (const m of e.messages) Array.isArray(m) ? m.forEach(addPlaceholder) : addPlaceholder(m);
+      }
+    } catch (err2) {
+      log2("placeholder error", err2);
+    }
+  });
+}
+function installUploadGuard() {
+  const mod = findFns("uploadLocalFiles");
+  if (!mod) throw new Error("upload hook not found - uploads cannot be blocked in encrypted chats");
+  return instead("uploadLocalFiles", mod, (args, orig) => {
+    const opts = args[0];
+    let channelId = opts?.channelId ?? opts?.channel?.id;
+    if (!channelId) channelId = selectedChannelId() || void 0;
+    if (channelId && isEncryptionOn(channelId)) {
+      notify("Encrypted images and files are not supported yet - upload cancelled so nothing is sent unencrypted. Turn encryption off for this chat to send it normally.");
+      return Promise.resolve();
+    }
+    return orig(...args);
+  });
+}
 function installAttachmentPatches() {
   const unpatches = [];
   const timers2 = [];
@@ -2679,10 +2726,15 @@ function installAttachmentPatches() {
       if (retry > 0) timers2.push(setTimeout(() => add(name, f, retry - 1), 5e3));
     }
   };
-  add("attachment marker", installMarkPatch);
-  add("attachment renderer", installRenderPatch);
-  add("upload patch", installUploadPatch);
-  add("caption size tag", installTagPatch);
+  if (IMAGES_WORKING) {
+    add("attachment marker", installMarkPatch);
+    add("attachment renderer", installRenderPatch);
+    add("upload patch", installUploadPatch);
+    add("caption size tag", installTagPatch);
+  } else {
+    add("attachment placeholder", installPlaceholderPatch);
+    add("upload guard", installUploadGuard);
+  }
   return () => {
     stopped = true;
     timers2.forEach((t) => clearTimeout(t));
