@@ -3022,8 +3022,28 @@ function safely(name, install2, retry = 3) {
     else quiet(`${name} failed: ${msg}`);
   }
 }
+function unloadAll() {
+  timers.forEach((t) => clearTimeout(t));
+  timers = [];
+  undo.slice().reverse().forEach((u) => {
+    try {
+      u();
+    } catch (e) {
+      console.log("[aegires-e2ee] unpatch error", e);
+    }
+  });
+  undo = [];
+}
+var SLOT = "__aegiresE2EEUnload";
 var index_default = {
   onLoad() {
+    const g = globalThis;
+    try {
+      g[SLOT]?.();
+    } catch (e) {
+      console.log("[aegires-e2ee] cleanup of previous instance failed", e);
+    }
+    g[SLOT] = unloadAll;
     initStorage();
     try {
       diag.installed["env"] = envSummary();
@@ -3038,16 +3058,9 @@ var index_default = {
     safely("commands", installCommands);
   },
   onUnload() {
-    timers.forEach((t) => clearTimeout(t));
-    timers = [];
-    undo.slice().reverse().forEach((u) => {
-      try {
-        u();
-      } catch (e) {
-        console.log("[aegires-e2ee] unpatch error", e);
-      }
-    });
-    undo = [];
+    unloadAll();
+    const g = globalThis;
+    if (g[SLOT] === unloadAll) delete g[SLOT];
   },
   settings: Settings
 };
