@@ -53,7 +53,7 @@ Everyone in a conversation must use the **same password**. Messages cannot be de
 3. Paste this URL, including the trailing slash:
 
    ```
-   https://system32crowdstrikewin11.github.io/aegires-e2ee/
+   https://system32crowdstrikewin11.github.io/aegires-e2ee/dev/
    ```
 
 4. Enable **Aegires E2EE**.
