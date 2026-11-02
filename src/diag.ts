@@ -8,9 +8,11 @@ export const diag = {
   encSeen: 0, // messages starting with the § marker
   decrypted: 0,
   noKey: 0,
-  wrongKey: 0,
+  noAuthor: 0, // encrypted message but we could not tell who wrote it (author id is part of the key)
+  wrongKey: 0, // wrong key, wrong channel/author, or not a v2 message
   sendCalls: 0,
   lastSend: "(no send seen yet)",
+  lastKdfMs: 0, // how long the last Argon2id derivation took
 };
 
 export function diagLines(): string[] {
@@ -23,8 +25,10 @@ export function diagLines(): string[] {
     `encrypted msgs seen: ${diag.encSeen}`,
     `decrypted OK: ${diag.decrypted}`,
     `no key for channel: ${diag.noKey}`,
-    `wrong key: ${diag.wrongKey}`,
+    `no author id: ${diag.noAuthor}`,
+    `wrong key / not v2: ${diag.wrongKey}`,
     `sendMessage calls: ${diag.sendCalls}`,
     `last send: ${diag.lastSend}`,
+    `last key derivation: ${diag.lastKdfMs ? (diag.lastKdfMs / 1000).toFixed(1) + " s" : "never run"}`,
   ];
 }

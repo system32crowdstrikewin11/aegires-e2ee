@@ -13,10 +13,11 @@
 // Discord so history is fetched again.
 import { before, findFlux, noteFound } from "../patch.ts";
 import { storage } from "@vendetta/plugin";
-import { decryptText, looksEncrypted } from "../crypto/wire.ts";
+import { decryptMessage as decryptWire, looksEncrypted } from "../crypto/v2.ts";
 import { splitSizeTag } from "../crypto/files.ts";
 import { getReceiveKeys } from "../state.ts";
 import { LOCK } from "./send.ts";
+import { noteSelfId } from "../self.ts";
 import { diag } from "../diag.ts";
 import { recordSizeHint } from "./attachments.ts";
 
@@ -33,9 +34,21 @@ const MESSAGE_EVENTS = new Set([
   "SEARCH_FINISH",
 ]);
 
-function tryDecrypt(content: string, channelId: string | undefined): string | null {
-  for (const key of getReceiveKeys(channelId)) {
-    const plain = decryptText(content, key);
+// Aegires binds each ciphertext to (channel id, AUTHOR id), so we need the author of every
+// message. Partial MESSAGE_UPDATE events can omit it; remember who wrote what from earlier events.
+const authorById = new Map<string, string>();
+function rememberAuthor(m: any): void {
+  if (!m?.id || !m.author?.id) return;
+  authorById.set(String(m.id), String(m.author.id));
+  if (authorById.size > 4000) {
+    const first = authorById.keys().next().value;
+    if (first !== undefined) authorById.delete(first);
+  }
+}
+
+function tryDecrypt(content: string, channelId: string, authorId: string, keys: Uint8Array[]): string | null {
+  for (const key of keys) {
+    const plain = decryptWire(content, key, channelId, authorId);
     if (plain !== null) return plain;
   }
   return null;
@@ -43,24 +56,30 @@ function tryDecrypt(content: string, channelId: string | undefined): string | nu
 
 function decryptMessage(m: any, fallbackChannelId?: string): boolean {
   if (!m || typeof m !== "object") return false;
+  rememberAuthor(m);
   const channelId: string | undefined = m.channel_id ?? m.channelId ?? fallbackChannelId;
+  const authorId: string | undefined = m.author?.id ?? (m.id ? authorById.get(String(m.id)) : undefined);
   let changed = false;
 
   if (looksEncrypted(m.content)) {
     diag.encSeen++;
-    const hasKeys = getReceiveKeys(channelId).length > 0;
-    if (!hasKeys) diag.noKey++;
-    const plain = tryDecrypt(m.content, channelId);
-    if (plain !== null) {
-      diag.decrypted++;
-      // Aegires puts "[sz:W,H]" in front of image captions; hide it from the visible text.
-      const sp = splitSizeTag(plain);
-      recordSizeHint(m.id, sp.width, sp.height);
-      const text = sp.text;
-      m.content = (storage.showLock ? LOCK : "") + text;
-      changed = true;
-    } else if (hasKeys) {
-      diag.wrongKey++;
+    const keys = getReceiveKeys(channelId);
+    if (keys.length === 0) {
+      diag.noKey++;
+    } else if (!channelId || !authorId) {
+      diag.noAuthor++;
+    } else {
+      const plain = tryDecrypt(m.content, channelId, authorId, keys);
+      if (plain !== null) {
+        diag.decrypted++;
+        // Aegires puts "[sz:W,H]" in front of image captions; hide it from the visible text.
+        const sp = splitSizeTag(plain);
+        recordSizeHint(m.id, sp.width, sp.height);
+        m.content = (storage.showLock ? LOCK : "") + sp.text;
+        changed = true;
+      } else {
+        diag.wrongKey++;
+      }
     }
   }
   // Reply previews ("replying to ...") carry their own copy of the original message.
@@ -71,6 +90,8 @@ function decryptMessage(m: any, fallbackChannelId?: string): boolean {
 function handleEvent(event: any): void {
   diag.events++;
   if (!event || typeof event !== "object") return;
+  // Learn our own user id (needed to encrypt) from the login / profile events.
+  if (event.type === "CONNECTION_OPEN" || event.type === "CURRENT_USER_UPDATE") noteSelfId(event.user?.id);
   if (!event.message && !event.messages) return;
   // Any event that carries message(s) is processed, whatever its name, so a renamed event
   // type in a new Discord version cannot silently disable decryption.

@@ -10,6 +10,7 @@ import { hasSecureRandom } from "./crypto/random.ts";
 import Settings from "./ui/Settings.tsx";
 import { diag } from "./diag.ts";
 import { envSummary } from "./patch.ts";
+import { getSelfId } from "./self.ts";
 
 let undo: Array<() => void> = [];
 
@@ -56,6 +57,7 @@ export default {
     if (!hasSecureRandom()) {
       quiet("no secure random source - encrypting is impossible. Run the self-test in settings.");
     }
+    try { getSelfId(); } catch {}
     safely("send patch", installSendPatch);
     safely("receive patch", installReceivePatch);
     safely("attachment patches", installAttachmentPatches);

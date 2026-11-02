@@ -6,14 +6,15 @@
 // into "§<base64>" and then call the real function, or (b) refuse to call it at all.
 //
 // Rule #1 is FAIL CLOSED: if encryption is switched on for a channel and anything goes wrong
-// (no key, text too long, no secure RNG), we do NOT send. Silently sending plaintext to a
-// channel where the user believes encryption is on would be the worst possible bug.
+// (no key, text too long, unknown own user id, no secure RNG), we do NOT send. Silently sending
+// plaintext to a channel where the user believes encryption is on would be the worst possible bug.
 import { findFns, instead, noteFound } from "../patch.ts";
 import { notify as showToast } from "../notify.ts";
 import { storage } from "@vendetta/plugin";
 import { diag } from "../diag.ts";
-import { MAX_PLAINTEXT_LEN, encryptText, looksEncrypted } from "../crypto/wire.ts";
-import { getSendKey, isEncryptionOn } from "../state.ts";
+import { encryptMessage, looksEncrypted, maxPlaintextBytes, utf8Length } from "../crypto/v2.ts";
+import { getSendKey, getSendPreset, isEncryptionOn } from "../state.ts";
+import { getSelfId } from "../self.ts";
 
 export const LOCK = "🔒 "; // "🔒 " shown in front of decrypted messages (if enabled)
 
@@ -30,12 +31,20 @@ function prepare(channelId: string, content: unknown): string | null | typeof BL
     showToast("E2EE is on for this chat but no key is set - message not sent");
     return BLOCK;
   }
-  if (content.length > MAX_PLAINTEXT_LEN) {
-    showToast(`Too long to encrypt (${content.length}/${MAX_PLAINTEXT_LEN}) - message not sent`);
+  const self = getSelfId();
+  if (!self) {
+    showToast("E2EE: could not find your Discord user id yet - message not sent. Try again in a moment.");
+    return BLOCK;
+  }
+  const preset = getSendPreset(channelId);
+  const max = maxPlaintextBytes(preset);
+  const len = utf8Length(content);
+  if (len > max) {
+    showToast(`Too long to encrypt with ${preset.label} (${len}/${max} bytes) - message not sent`);
     return BLOCK;
   }
   try {
-    return encryptText(content, key);
+    return encryptMessage(content, key, preset, channelId, self);
   } catch (e) {
     showToast("Encryption failed - message not sent");
     console.log("[aegires-e2ee] encrypt error", e);
@@ -49,7 +58,6 @@ export function installSendPatch(): () => void {
   if (!MessageActions) {
     diag.installed["sendMessage lookup"] = "NOT FOUND";
     throw new Error("sendMessage module not found - sending is NOT encrypted");
-    return () => {};
   }
   const undo: Array<() => void> = [];
 
@@ -70,7 +78,7 @@ export function installSendPatch(): () => void {
       }
       if (message && typeof channelId === "string") {
         const out = prepare(channelId, message.content);
-        diag.lastSend = `on=${isEncryptionOn(channelId)} key=${!!getSendKey(channelId)} text=${typeof message.content === "string" && message.content.length > 0} -> ${out === BLOCK ? "BLOCKED" : out === null ? "sent unchanged" : "encrypted"}`;
+        diag.lastSend = `on=${isEncryptionOn(channelId)} key=${!!getSendKey(channelId)} self=${!!getSelfId()} text=${typeof message.content === "string" && message.content.length > 0} -> ${out === BLOCK ? "BLOCKED" : out === null ? "sent unchanged" : "encrypted"}`;
         if (out === BLOCK) return Promise.resolve();
         if (out !== null) message.content = out;
       }

@@ -1,3 +1,4 @@
+// LEGACY (Aegires v1) wire format - no longer used for text. Kept only until images are rewired for v3.
 // Aegires "v1" wire format for text messages (see app/.../util/Crypto.java in Aegires):
 //
 //   "§" + base64( iv[12] || AES-256-GCM( flag[1] || data ) || tag[16] )

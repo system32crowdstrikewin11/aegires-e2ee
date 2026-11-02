@@ -6,15 +6,22 @@ import { selectedChannelId } from "../patch.ts";
 import { storage } from "@vendetta/plugin";
 import { notify as showToast } from "../notify.ts";
 import {
+  PRESETS,
+  checkPassword,
   clearGlobalKey,
+  forcedChannelIds,
+  getPreset,
   hasGlobalKey,
   listChannelConfigs,
   removeChannelConfig,
   setChannelEnabled,
   setChannelPassword,
   setGlobalPassword,
+  setPreset,
 } from "../state.ts";
-import { runSelfTest } from "../selftest.ts";
+import { maxPlaintextBytes } from "../crypto/v2.ts";
+import { getSelfId } from "../self.ts";
+import { measureKdf, runSelfTest } from "../selftest.ts";
 import { diagLines } from "../diag.ts";
 
 const View = comp("View");
@@ -99,6 +106,11 @@ function SettingsInner() {
   const [chanId, setChanId] = React.useState(currentChannelId());
   const [chanPw, setChanPw] = React.useState("");
   const [testLines, setTestLines] = React.useState([] as string[]);
+  const [pct, setPct] = React.useState(-1);
+  const onProgress = (f: number) => {
+    const p = Math.floor(f * 100);
+    if (p !== pct) setPct(p);
+  };
 
   // Run a slow async action with a busy flag, and report failures instead of crashing.
   const run = async (what: string, fn: () => Promise<void>) => {
@@ -110,6 +122,7 @@ function SettingsInner() {
       showToast(what + " failed: " + String(e));
     } finally {
       setBusy(false);
+      setPct(-1);
       refresh();
     }
   };
@@ -118,21 +131,42 @@ function SettingsInner() {
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
       <Card
         title={"Global key " + (hasGlobalKey() ? "(set)" : "(not set)")}
-        hint="Used in every chat that has no channel key. Everyone in the chat must type the SAME password, and Aegires users must use the same one in the app. The password is not saved - only the key derived from it."
+        hint="Used in every chat that has no channel key. Everyone in the chat must type the SAME password, and Aegires users must use the same one in the app. The password is not saved - only the key derived from it. Deriving the key is slow on purpose (Argon2id, 64 MiB): keep this screen open until it finishes."
       >
         <Field value={pw} onChange={setPw} placeholder="Shared password" secret />
         <Button
-          label={busy ? "Deriving key..." : "Set global key"}
+          label={busy ? "Deriving key..." + (pct >= 0 ? " " + pct + "%" : "") : "Set global key"}
           busy={busy}
           onPress={() => {
-            if (!pw) return showToast("Password cannot be empty");
+            const bad = checkPassword(pw);
+            if (bad) return showToast(bad);
             run("Set global key", async () => {
-              await setGlobalPassword(pw);
+              await setGlobalPassword(pw, onProgress);
               setPw("");
             });
           }}
         />
         {hasGlobalKey() ? <Button label="Clear global key" danger onPress={() => { clearGlobalKey(); showToast("Global key cleared"); refresh(); }} /> : null}
+      </Card>
+
+      <Card
+        title={"Encryption strength: " + getPreset().label}
+        hint="Applies to messages YOU send. You can read everyone else's, whatever they chose. Stronger = more padding, so fewer characters fit in one message."
+      >
+        {PRESETS.map((p) => (
+          <View key={p.index}>
+            <Button
+              label={(getPreset().index === p.index ? "\u2714 " : "") + p.label + "  (max " + maxPlaintextBytes(p) + " bytes per message)"}
+              onPress={() => { setPreset(p.index); refresh(); }}
+            />
+          </View>
+        ))}
+      </Card>
+
+      <Card title="Preset channels" hint="Channels with a built-in key (an Aegires feature for public channels). Nothing to set up: messages there are always encrypted with AES-128-GCM and everyone can read them.">
+        {forcedChannelIds().map((id: string) => (
+          <Text key={id} style={{ color: C.text, marginTop: 6, fontFamily: "monospace" }}>{id}</Text>
+        ))}
       </Card>
 
       <Card title="Behaviour">
@@ -145,12 +179,16 @@ function SettingsInner() {
         <Field value={chanId} onChange={setChanId} placeholder="Channel ID" />
         <Field value={chanPw} onChange={setChanPw} placeholder="Password for this chat only (optional)" secret />
         <Button
-          label="Save for this chat"
+          label={busy && pct >= 0 ? "Deriving key... " + pct + "%" : "Save for this chat"}
           busy={busy}
           onPress={() => {
             if (!/^\d+$/.test(chanId)) return showToast("Channel ID must be digits only");
+            if (chanPw) {
+              const bad = checkPassword(chanPw);
+              if (bad) return showToast(bad);
+            }
             run("Save chat settings", async () => {
-              if (chanPw) await setChannelPassword(chanId, chanPw);
+              if (chanPw) await setChannelPassword(chanId, chanPw, onProgress);
               setChannelEnabled(chanId, true);
               setChanPw("");
             });
@@ -168,11 +206,11 @@ function SettingsInner() {
       <Card title="Diagnostics" hint="What the hooks are doing right now. Press Refresh after sending / receiving a message.">
         <Button label="Refresh" onPress={() => refresh()} />
         <Text selectable style={{ color: C.text, marginTop: 8, fontFamily: "monospace", fontSize: 12 }}>
-          {"global key: " + (hasGlobalKey() ? "set" : "NOT SET") + "\n" + diagLines().join("\n")}
+          {"global key: " + (hasGlobalKey() ? "set" : "NOT SET") + "\npreset: " + getPreset().label + "\nown user id: " + (getSelfId() ?? "NOT FOUND YET") + "\n" + diagLines().join("\n")}
         </Text>
       </Card>
 
-      <Card title="Self-test" hint="Run this first. It checks Discord has a secure random source and that this phone can decrypt messages made by the real Aegires code.">
+      <Card title="Self-test" hint="Run this first. It checks, on this phone, that the encryption (all three strengths, file chunks, Argon2id) gives exactly the bytes the Aegires reference gives.">
         <Button
           label={busy ? "Running..." : "Run self-test"}
           busy={busy}
@@ -184,8 +222,18 @@ function SettingsInner() {
             })
           }
         />
+        <Button
+          label={busy ? "Measuring... " + (pct >= 0 ? pct + "%" : "") : "Measure key derivation speed (real size)"}
+          busy={busy}
+          onPress={() =>
+            run("Key derivation", async () => {
+              const ms = await measureKdf(onProgress);
+              setTestLines(["INFO  full Argon2id (64 MiB, 3 passes) took " + (ms / 1000).toFixed(1) + " s on this phone"]);
+            })
+          }
+        />
         {testLines.map((l: string, i: number) => (
-          <Text key={i} style={{ color: l.startsWith("PASS") ? C.text : C.danger, marginTop: 4, fontFamily: "monospace" }}>{l}</Text>
+          <Text key={i} style={{ color: l.startsWith("FAIL") ? C.danger : C.text, marginTop: 4, fontFamily: "monospace" }}>{l}</Text>
         ))}
       </Card>
     </ScrollView>

@@ -319,6 +319,8 @@ function installTagPatch(): () => void {
 // ---------------------------------------------------------------- entry
 // ---------------------------------------------------------------- SAFE MODE (images broken)
 // Flip to true once image decrypt/encrypt works again (everything above is the real code).
+// MUST stay false: the image code below still speaks the OLD v1 file format. It is rewritten for the
+// v3 chunked format in a later step; until then only the placeholder + upload guard run.
 const IMAGES_WORKING = false;
 
 const PLACEHOLDER_MARK = "\u{1F512} Encrypted attachment";
