@@ -1,0 +1,14 @@
+{
+  "name": "Aegires E2EE (dev)",
+  "description": "Encrypt and decrypt messages with a shared passphrase. Built for Kettu on Android. Aliucord users with a compatible plugin and the native Aegires client can also read your messages, as long as they have the same key.",
+  "authors": [
+    {
+      "name": "Dark (system32crowdstrikewin11)"
+    }
+  ],
+  "main": "index.js",
+  "vendetta": {
+    "icon": "ic_lock"
+  },
+  "hash": "8ad5f7766f579c091e6063df0398cd410fe9add48cd7af7815a916c128359765"
+}
